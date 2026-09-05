@@ -1,0 +1,183 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Arcade Track - Lobby</title>
+    <style>
+        body { margin: 0; overflow: hidden; background-color: #000; font-family: Tahoma, sans-serif; color: #fff; user-select: none;}
+        #ui-layer { position: absolute; top: 0; left: 0; width: 100%; height: 100%; display: flex; flex-direction: column; justify-content: space-between; align-items: center; pointer-events: none; z-index: 20; padding: 40px 0; box-sizing: border-box; }
+        
+        .player-list { background: rgba(0,0,0,0.8); border: 2px solid #4da6ff; padding: 20px; border-radius: 10px; width: 300px; text-align: left; position: absolute; left: 20px; top: 20px; pointer-events: auto;}
+        .player-item { font-size: 18px; margin: 10px 0; border-bottom: 1px solid #333; padding-bottom: 5px; font-weight: bold;}
+        .player-item span { color: #ffaa00; font-size: 14px; float: right; font-weight: normal;}
+
+        .car-selector { display: flex; align-items: center; gap: 30px; pointer-events: auto; background: rgba(0, 0, 0, 0.7); padding: 15px 30px; border-radius: 50px; border: 2px solid #4da6ff; box-shadow: 0 0 20px rgba(77, 166, 255, 0.3); }
+        .nav-btn { background: none; border: none; color: #4da6ff; font-size: 42px; font-weight: bold; cursor: pointer; transition: transform 0.1s; outline: none; }
+        .nav-btn:hover { color: #fff; transform: scale(1.2); }
+        #car-name-display { font-size: 28px; font-weight: bold; text-transform: uppercase; width: 250px; text-align: center; }
+        
+        #btn-start { pointer-events: auto; background: linear-gradient(90deg, #0044ff, #00aaff); color: white; border: 2px solid #fff; padding: 15px 60px; font-size: 28px; font-weight: 900; font-style: italic; border-radius: 8px; cursor: pointer; box-shadow: 0 0 20px #00aaff; transition: transform 0.1s; margin-top: 20px;}
+        #btn-start:hover:not(:disabled) { transform: scale(1.05); box-shadow: 0 0 30px #00ffff; }
+        #btn-start:disabled { background: #555; color: #888; border-color: #444; cursor: not-allowed; box-shadow: none; }
+        #error-overlay { position: absolute; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.9); z-index: 100; display: none; justify-content: center; align-items: center; flex-direction: column; }
+    </style>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/loaders/GLTFLoader.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/OrbitControls.js"></script>
+</head>
+<body>
+
+    <div id="error-overlay">
+        <h1 id="error-msg" style="color: #ff4444;">CONNECTION ERROR</h1>
+        <button style="padding: 10px 30px; font-size: 20px; cursor: pointer;" onclick="window.location.href='index.html'">BACK TO MENU</button>
+    </div>
+
+    <div id="ui-layer">
+        <div class="player-list">
+            <h2 style="margin-top:0; color:#4da6ff; border-bottom: 2px solid #4da6ff; padding-bottom:5px;">ROOM: <span id="lobby-code"></span></h2>
+            <div id="lobby-players"></div>
+        </div>
+        
+        <h1 id="lobby-status" style="font-size: 42px; font-style: italic; text-shadow: 0 0 10px #fff; margin-top: 20px;">CONNECTING...</h1>
+
+        <div style="display: flex; flex-direction: column; align-items: center;">
+            <div class="car-selector">
+                <button class="nav-btn" id="btn-prev">&lt;</button>
+                <div id="car-name-display">Classic Racer</div>
+                <button class="nav-btn" id="btn-next">&gt;</button>
+            </div>
+            <p style="color: #aaa; margin-top: 10px;">Click and drag to rotate car</p>
+            <button id="btn-start" disabled>START RACE</button>
+        </div>
+    </div>
+
+    <script>
+        let socket = null;
+
+        const playerId = sessionStorage.getItem('playerId');
+        const playerName = sessionStorage.getItem('playerName');
+        const roomCode = sessionStorage.getItem('roomCode');
+        const isCreating = sessionStorage.getItem('isCreating') === 'true';
+        const maxPlayers = sessionStorage.getItem('maxPlayers');
+        
+        if (!playerId || !roomCode) window.location.href = 'index.html';
+        document.getElementById('lobby-code').innerText = roomCode;
+
+        // Perfected Paths for the new Netlify folder structure
+        const carList = [
+            { file: 'Models/car.glb', name: 'Classic Racer' }, 
+            { file: 'Models/kart-oobi.glb', name: 'Oobi Kart' },
+            { file: 'Models/police.glb', name: 'Police Cruiser' }, 
+            { file: 'Models/race-future.glb', name: 'Future Racer' },
+            { file: 'Models/sedan-sports.glb', name: 'Sports Sedan' }
+        ];
+        let currentCarIndex = 0;
+        let takenCars = [];
+        let amIHost = false;
+        let activeCarMesh = null;
+        const loadedCarsCache = {}; 
+
+        const scene = new THREE.Scene(); scene.background = new THREE.Color("#111");
+        const camera = new THREE.PerspectiveCamera(50, window.innerWidth / window.innerHeight, 0.1, 1000);
+        const renderer = new THREE.WebGLRenderer({ antialias: false });
+        renderer.setPixelRatio(1); renderer.setSize(window.innerWidth, window.innerHeight); document.body.appendChild(renderer.domElement);
+        const orbitControls = new THREE.OrbitControls(camera, renderer.domElement); orbitControls.enablePan = false; orbitControls.enableZoom = false; orbitControls.autoRotate = true;
+        scene.add(new THREE.AmbientLight("#aaa", 1.2)); const dirLight = new THREE.DirectionalLight("#fff", 0.8); dirLight.position.set(100, 150, 100); scene.add(dirLight);
+        camera.position.set(0, 20, 40); orbitControls.target.set(0, 0, 0);
+
+        const loader = new THREE.GLTFLoader();
+        
+        function loadCarGraphicsOnly(index) {
+            if (activeCarMesh) scene.remove(activeCarMesh);
+            document.getElementById('car-name-display').innerText = carList[index].name;
+            sessionStorage.setItem('carIndex', index);
+
+            if (loadedCarsCache[index]) {
+                activeCarMesh = loadedCarsCache[index]; scene.add(activeCarMesh);
+            } else {
+                loader.load(carList[index].file, function (gltf) {
+                    const car = gltf.scene; car.scale.set(12, 12, 12); 
+                    car.traverse(node => { if (node.isMesh && node.material && !node.material.map) node.material = new THREE.MeshLambertMaterial({ color: 0x2266cc }); });
+                    loadedCarsCache[index] = car; activeCarMesh = car; scene.add(car);
+                });
+            }
+        }
+
+        function requestCarChange(index) {
+            loadCarGraphicsOnly(index);
+            if (socket && socket.readyState === WebSocket.OPEN) {
+                socket.send(JSON.stringify({ type: "change_car", room: roomCode, id: playerId, car: index }));
+            }
+        }
+
+        function findNextAvailableCar(dir) {
+            let attempt = currentCarIndex;
+            for(let i=0; i<carList.length; i++) {
+                attempt = (attempt + dir + carList.length) % carList.length;
+                if (!takenCars.includes(attempt)) return attempt;
+            }
+            return currentCarIndex;
+        }
+
+        document.getElementById('btn-prev').addEventListener('click', () => { currentCarIndex = findNextAvailableCar(-1); requestCarChange(currentCarIndex); });
+        document.getElementById('btn-next').addEventListener('click', () => { currentCarIndex = findNextAvailableCar(1); requestCarChange(currentCarIndex); });
+        
+        loadCarGraphicsOnly(0);
+
+        function animate() { requestAnimationFrame(animate); orbitControls.update(); renderer.render(scene, camera); } animate();
+
+        // ⚠️ Change 'ws://localhost:8765' to your Render 'wss://...' URL before final deployment to Netlify
+        socket = new WebSocket('ws://localhost:8765');
+        
+        socket.onopen = () => {
+            const payload = { type: "join_lobby", room: roomCode, id: playerId, name: playerName, car: currentCarIndex, create: isCreating };
+            if (isCreating) payload.max = maxPlayers;
+            socket.send(JSON.stringify(payload));
+        };
+
+        socket.onerror = () => { document.getElementById('error-overlay').style.display = 'flex'; };
+
+        socket.onmessage = (event) => {
+            const data = JSON.parse(event.data);
+            if (data.type === "error") {
+                document.getElementById('error-msg').innerText = data.msg;
+                document.getElementById('error-overlay').style.display = 'flex';
+                socket.close();
+            }
+            else if (data.type === "lobby_update") {
+                let html = ""; takenCars = []; let pCount = 0; amIHost = data.host === playerId;
+
+                for (let pid in data.players) {
+                    pCount++; let p = data.players[pid];
+                    html += `<div class="player-item">${p.name}${p.host ? " (HOST)" : ""} <span>[${carList[p.car].name}]</span></div>`;
+                    
+                    if (pid !== playerId) {
+                        takenCars.push(p.car);
+                    } else {
+                        if (currentCarIndex !== p.car) {
+                            currentCarIndex = p.car;
+                            loadCarGraphicsOnly(currentCarIndex);
+                        }
+                    }
+                }
+                
+                document.getElementById('lobby-players').innerHTML = html;
+                document.getElementById('lobby-status').innerText = `WAITING FOR PLAYERS... (${pCount}/${data.max})`;
+
+                const startBtn = document.getElementById('btn-start');
+                if (amIHost && pCount >= 2) { startBtn.disabled = false; document.getElementById('lobby-status').innerText = "READY TO START"; } 
+                else { startBtn.disabled = true; }
+            }
+            else if (data.type === "launch_race") {
+                sessionStorage.setItem('spawnSlot', data.slots[playerId]);
+                window.location.href = 'game.html'; 
+            }
+        };
+
+        document.getElementById('btn-start').addEventListener('click', () => {
+            if (amIHost) socket.send(JSON.stringify({ type: "start_race", room: roomCode, id: playerId }));
+        });
+    </script>
+</body>
+</html>

@@ -1,0 +1,91 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Arcade Track - Home</title>
+    <style>
+        body { 
+            margin: 0; background-color: #000; color: #fff; font-family: Tahoma, sans-serif; 
+            display: flex; justify-content: center; align-items: center; height: 100vh; overflow: hidden; 
+        }
+        
+        .screen { 
+            background: rgba(0,0,0,0.85); padding: 40px; border-radius: 15px; border: 2px solid #4da6ff; 
+            text-align: center; width: 750px; max-width: 95vw; box-shadow: 0 0 30px rgba(77, 166, 255, 0.3); box-sizing: border-box;
+        }
+
+        h1 { font-size: 54px; font-weight: 900; font-style: italic; text-shadow: 0 0 15px #4da6ff; margin-top: 0; margin-bottom: 30px; text-transform: uppercase; }
+        .name-panel { margin-bottom: 30px; }
+        .columns { display: flex; justify-content: space-between; gap: 30px; }
+        .column { flex: 1; background: rgba(255, 255, 255, 0.05); padding: 25px; border-radius: 12px; border: 1px solid #333; }
+        .column h3 { margin-top: 0; margin-bottom: 15px; font-size: 22px; }
+        
+        input, select { 
+            width: 100%; box-sizing: border-box; padding: 12px; margin: 10px 0; font-size: 18px; 
+            text-align: center; text-transform: uppercase; border-radius: 6px; background: #222; color: #fff; border: 1px solid #555; outline: none; 
+        }
+
+        #player-name { width: 60%; font-size: 24px; padding: 15px; border-color: #4da6ff; background: rgba(0, 0, 0, 0.5); }
+        
+        .btn { 
+            background: linear-gradient(90deg, #0044ff, #00aaff); color: white; border: 2px solid #fff; padding: 12px 20px; 
+            font-size: 20px; font-weight: 900; font-style: italic; border-radius: 8px; cursor: pointer; text-transform: uppercase; 
+            width: 100%; box-sizing: border-box; transition: transform 0.1s; margin-top: 15px;
+        }
+        .btn:hover { transform: scale(1.05); box-shadow: 0 0 15px #00ffff; }
+    </style>
+</head>
+<body>
+    <div class="screen">
+        <h1>ARCADE RACER</h1>
+        
+        <div class="name-panel">
+            <input type="text" id="player-name" placeholder="YOUR NAME" maxlength="10">
+        </div>
+
+        <div class="columns">
+            <div class="column" style="border-color: rgba(255, 170, 0, 0.3);">
+                <h3 style="color:#ffaa00;">CREATE ROOM</h3>
+                <select id="max-players">
+                    <option value="2">2 PLAYERS</option>
+                    <option value="3">3 PLAYERS</option>
+                    <option value="4" selected>4 PLAYERS</option>
+                </select>
+                <input type="text" id="create-room-code" placeholder="NEW ROOM CODE" maxlength="6">
+                <button class="btn" onclick="joinLobby(true)">CREATE</button>
+            </div>
+            
+            <div class="column" style="border-color: rgba(77, 166, 255, 0.3);">
+                <h3 style="color:#4da6ff;">JOIN ROOM</h3>
+                <input type="text" id="join-room-code" placeholder="EXISTING CODE" maxlength="6">
+                <button class="btn" onclick="joinLobby(false)" style="margin-top: 71px;">JOIN</button>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        if (!sessionStorage.getItem('playerId')) {
+            sessionStorage.setItem('playerId', Math.random().toString(36).substr(2, 9));
+        }
+
+        if (sessionStorage.getItem('playerName')) {
+            document.getElementById('player-name').value = sessionStorage.getItem('playerName');
+        }
+
+        function joinLobby(isCreating) {
+            const name = document.getElementById('player-name').value.trim() || "AKSHAY";
+            const roomCode = document.getElementById(isCreating ? 'create-room-code' : 'join-room-code').value.toUpperCase();
+            
+            if(!roomCode) return alert("Please enter a room code.");
+
+            sessionStorage.setItem('playerName', name);
+            sessionStorage.setItem('roomCode', roomCode);
+            sessionStorage.setItem('isCreating', isCreating);
+            if (isCreating) sessionStorage.setItem('maxPlayers', document.getElementById('max-players').value);
+            
+            window.location.href = 'lobby.html';
+        }
+    </script>
+</body>
+</html>
