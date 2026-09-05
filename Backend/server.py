@@ -4,8 +4,7 @@ import json
 import logging
 import os
 
-# This completely mutes ALL internal WebSocket errors, including 
-# empty handshakes, dropped connections, and ghost pings.
+# Mute internal WebSocket connection warnings
 logging.getLogger("websockets").setLevel(logging.CRITICAL)
 
 rooms = {}
@@ -58,7 +57,6 @@ async def handler(websocket):
                 if room_code in rooms and rooms[room_code]["state"] == "lobby":
                     if len(rooms[room_code]["players"]) < rooms[room_code]["max_players"] or player_id in rooms[room_code]["players"]:
                         
-                        # PREVENT LOBBY CRASHES: Server definitively assigns a unique car
                         requested_car = data.get("car", 0)
                         taken_cars = [p["car"] for p in rooms[room_code]["players"].values()]
                         if requested_car in taken_cars:
@@ -70,7 +68,8 @@ async def handler(websocket):
                         slot = len(rooms[room_code]["players"])
                         rooms[room_code]["players"][player_id] = {
                             "name": data["name"], "car": requested_car, "slot": slot, 
-                            "finished": False, "rank": 0, "state": {}, "connected": True
+                            "finished": False, "rank": 0, "state": {}, "connected": True,
+                            "ws": websocket  # FIX: Store the specific active connection
                         }
                         connected_clients[websocket] = (room_code, player_id)
                         print(f"[*] {data['name']} joined Room {room_code}")
@@ -85,6 +84,7 @@ async def handler(websocket):
                 player_id = data["id"]
                 if room_code in rooms and player_id in rooms[room_code]["players"]:
                     rooms[room_code]["players"][player_id]["connected"] = True
+                    rooms[room_code]["players"][player_id]["ws"] = websocket # FIX: Update to the new game connection
                     connected_clients[websocket] = (room_code, player_id)
 
             elif msg_type == "change_car":
@@ -140,24 +140,27 @@ async def handler(websocket):
             del connected_clients[websocket]
             
             if room_code in rooms and player_id in rooms[room_code]["players"]:
-                rooms[room_code]["players"][player_id]["connected"] = False
                 
-                await asyncio.sleep(3)
-                
-                if room_code in rooms and player_id in rooms[room_code]["players"]:
-                    if not rooms[room_code]["players"][player_id]["connected"]:
-                        was_host = (rooms[room_code]["host"] == player_id)
-                        player_name = rooms[room_code]["players"][player_id]["name"]
-                        del rooms[room_code]["players"][player_id]
-                        print(f"[*] {player_name} left Room {room_code}")
-                        
-                        if not rooms[room_code]["players"]:
-                            del rooms[room_code] 
-                            print(f"[*] Room {room_code} closed.")
-                        else:
-                            if was_host: 
-                                rooms[room_code]["host"] = list(rooms[room_code]["players"].keys())[0]
-                            await broadcast_lobby(room_code)
+                # FIX: ONLY disconnect if this dropping connection is STILL their active connection
+                if rooms[room_code]["players"][player_id].get("ws") == websocket:
+                    rooms[room_code]["players"][player_id]["connected"] = False
+                    
+                    await asyncio.sleep(3)
+                    
+                    if room_code in rooms and player_id in rooms[room_code]["players"]:
+                        if not rooms[room_code]["players"][player_id]["connected"]:
+                            was_host = (rooms[room_code]["host"] == player_id)
+                            player_name = rooms[room_code]["players"][player_id]["name"]
+                            del rooms[room_code]["players"][player_id]
+                            print(f"[*] {player_name} left Room {room_code}")
+                            
+                            if not rooms[room_code]["players"]:
+                                del rooms[room_code] 
+                                print(f"[*] Room {room_code} closed.")
+                            else:
+                                if was_host: 
+                                    rooms[room_code]["host"] = list(rooms[room_code]["players"].keys())[0]
+                                await broadcast_lobby(room_code)
 
 async def physics_tick():
     while True:
@@ -167,7 +170,7 @@ async def physics_tick():
 
 async def main():
     print("=================================================")
-    print("  Arcade Server RUNNING!                         ")
+    print("  Arcade Server RUNNING on Render!               ")
     print("=================================================")
     
     port = int(os.environ.get("PORT", 8765))
