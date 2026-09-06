@@ -17,7 +17,9 @@ async def broadcast_lobby(room_code):
                     for pid, p in room["players"].items() if p["connected"]}
     
     msg = json.dumps({"type": "lobby_update", "players": players_data, "max": room["max_players"], "host": room["host"]})
-    for ws, (r_code, p_id) in connected_clients.items():
+    
+    # FIX: Wrapped in list() to prevent iteration crash when clients disconnect
+    for ws, (r_code, p_id) in list(connected_clients.items()):
         if r_code == room_code:
             try: await ws.send(msg)
             except websockets.exceptions.ConnectionClosed: pass
@@ -28,7 +30,9 @@ async def broadcast_room_state(room_code):
         "type": "state",
         "players": {pid: p["state"] for pid, p in rooms[room_code]["players"].items() if p["connected"]}
     })
-    for ws, (r_code, p_id) in connected_clients.items():
+    
+    # FIX: Wrapped in list() so the physics loop doesn't crash if a lobby tab closes!
+    for ws, (r_code, p_id) in list(connected_clients.items()):
         if r_code == room_code:
             try: await ws.send(state_message)
             except websockets.exceptions.ConnectionClosed: pass
@@ -69,7 +73,7 @@ async def handler(websocket):
                         rooms[room_code]["players"][player_id] = {
                             "name": data["name"], "car": requested_car, "slot": slot, 
                             "finished": False, "rank": 0, "state": {}, "connected": True,
-                            "ws": websocket  # FIX: Store the specific active connection
+                            "ws": websocket  
                         }
                         connected_clients[websocket] = (room_code, player_id)
                         print(f"[*] {data['name']} joined Room {room_code}")
@@ -84,8 +88,9 @@ async def handler(websocket):
                 player_id = data["id"]
                 if room_code in rooms and player_id in rooms[room_code]["players"]:
                     rooms[room_code]["players"][player_id]["connected"] = True
-                    rooms[room_code]["players"][player_id]["ws"] = websocket # FIX: Update to the new game connection
+                    rooms[room_code]["players"][player_id]["ws"] = websocket 
                     connected_clients[websocket] = (room_code, player_id)
+                    print(f"[*] {player_id} successfully reconnected to the race in Room {room_code}!")
 
             elif msg_type == "change_car":
                 room_code = data["room"]
@@ -106,7 +111,9 @@ async def handler(websocket):
                         print(f"[!] Room {room_code} has started racing!")
                         slots = {pid: p["slot"] for pid, p in rooms[room_code]["players"].items()}
                         msg = json.dumps({"type": "launch_race", "slots": slots})
-                        for ws, (r_code, p_id) in connected_clients.items():
+                        
+                        # FIX: Snapshot iteration
+                        for ws, (r_code, p_id) in list(connected_clients.items()):
                             if r_code == room_code:
                                 try: await ws.send(msg)
                                 except: pass
@@ -127,25 +134,27 @@ async def handler(websocket):
                     rooms[room_code]["rank_counter"] += 1
                     
                     finish_msg = json.dumps({"type": "player_finished", "name": rooms[room_code]["players"][player_id]["name"], "rank": rank})
-                    for ws, (r_code, p_id) in connected_clients.items():
+                    
+                    # FIX: Snapshot iteration
+                    for ws, (r_code, p_id) in list(connected_clients.items()):
                         if r_code == room_code:
                             try: await ws.send(finish_msg)
                             except: pass
 
     except websockets.exceptions.ConnectionClosed: pass
-    except Exception as e: pass
+    except Exception as e: 
+        print(f"[ERROR] Connection handler crashed: {e}")
     finally:
         if websocket in connected_clients:
             room_code, player_id = connected_clients[websocket]
             del connected_clients[websocket]
             
             if room_code in rooms and player_id in rooms[room_code]["players"]:
-                
-                # FIX: ONLY disconnect if this dropping connection is STILL their active connection
                 if rooms[room_code]["players"][player_id].get("ws") == websocket:
                     rooms[room_code]["players"][player_id]["connected"] = False
                     
-                    await asyncio.sleep(3)
+                    # 20-second grace period for slower live connections
+                    await asyncio.sleep(20)
                     
                     if room_code in rooms and player_id in rooms[room_code]["players"]:
                         if not rooms[room_code]["players"][player_id]["connected"]:
@@ -164,8 +173,11 @@ async def handler(websocket):
 
 async def physics_tick():
     while True:
-        for room_code in list(rooms.keys()):
-            await broadcast_room_state(room_code)
+        try:
+            for room_code in list(rooms.keys()):
+                await broadcast_room_state(room_code)
+        except Exception as e:
+            print(f"[ERROR] Physics tick crashed: {e}")
         await asyncio.sleep(0.05)
 
 async def main():
